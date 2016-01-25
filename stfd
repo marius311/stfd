@@ -1,0 +1,33 @@
+#!/bin/sh
+
+set -e
+
+if [ "$(id -u)" != "0" ]; then
+   echo "This script must be run as root" 1>&2
+   exit 1
+fi
+
+
+ARGS=$1
+IMG=$2 
+CMD=$3
+
+# run the sftd.guest script inside the container to find and delete unused files
+cid=$(mktemp -d)/cid
+docker run --cidfile $cid --privileged \
+    -v $(which strace):/.strace \
+    -v $(pwd)/stfd.guest:/stfd \
+    $ARGS $IMG \
+    sh -c "/stfd $CMD"
+
+# commit the container to a new image
+img=$(docker commit $(cat $cid))
+docker rm $(cat $cid) > /dev/null
+rm -f $cid && rmdir $(dirname $cid)
+
+# squash the image
+echo "Squashing..."
+docker save $img | docker-squash -t ${IMG}-slim | docker load
+
+echo Done. Test with:
+echo docker run $ARGS ${IMG}-slim $CMD
