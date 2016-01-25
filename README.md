@@ -4,7 +4,7 @@
 
 `stfd` is a tool which massively reduces the size of existing Docker images by running them, monitoring what files in the filesystem are actually being used, deleting the ones that aren't, then [squashing](https://github.com/jwilder/docker-squash) the image. 
 
-This will only work in the case that the *exact* same set of files are accessed each time a container is run, otherwise `stfd` will not know which are safe to delete. It will also leave your container in a highly volatile state. Its unlikely anything other than the original command will actually work.
+This will only work in the case that the *exact* same set of files are accessed each time a container is run, otherwise `stfd` will not know which are safe to delete. It will also leave your container in a highly volatile state, with anything other than the original command unlikely to work.
 
 Nevertheless, this is useful for containers which perform a straighforward deterministic calculation each time, and where size if very important. For example, we use `stfd` to slim down images before sending them to the volunteers at [Cosmology@Home](https://github.com/marius311/cosmohome).
 
@@ -28,7 +28,7 @@ This will run the container, create a slimmed down version with the name `<tag>-
 ###Example
 
 ```bash
-sudo ./stfd "" myimage:latest "timeout 10 python mycode.py"
+$ sudo ./stfd "" myimage:latest "timeout 10 python mycode.py"
 Used files: 8800 (639M)
 Unused files: 16170 (477M)
 Squashing...
