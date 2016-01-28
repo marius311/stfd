@@ -17,8 +17,9 @@ cid=$(mktemp -d)/cid
 docker run --cidfile $cid --privileged \
     -v $(which strace):/.strace \
     -v $(pwd)/stfd.guest:/stfd \
+    --entrypoint sh \
     $ARGS $IMG \
-    sh -c "/stfd $CMD"
+     -c "/stfd $CMD"
 
 # commit the container to a new image
 img=$(docker commit $(cat $cid))
