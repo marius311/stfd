@@ -40,10 +40,14 @@ def sh(*args,**kwargs):
     return check_output(*args,**kwargs).strip()
 
 
-parser = argparse.ArgumentParser(prog='run_sim')
-parser.add_argument('image')
-parser.add_argument('--cmd',default='')
-args = parser.parse_args()
+parser = argparse.ArgumentParser(prog='docker-stfd')
+parser.add_argument('-v')
+parser.add_argument('image',help='the image name')
+parser.add_argument('cmd',default='',nargs='*',help='a command (which should access all necessary files)')
+args,extra = parser.parse_known_args()
+args.cmd += extra
+print(args)
+sys.exit()
 
 if ':' not in args.image: args.image += ':latest'
 
