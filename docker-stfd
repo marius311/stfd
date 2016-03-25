@@ -10,6 +10,8 @@ from hashlib import md5
 import sys
 import tarfile
 import re
+import json
+
 
 #the script we run inside the container to delete unused files
 guest_script=r"""
@@ -77,6 +79,7 @@ baseimage = next(l for l in dockerfile if l.startswith('FROM')).split()[1]
 
 #get slim'ed filesystem
 print("Inspecting container file usage...")
+entrypoint = json.loads(sh(["docker","inspect","-f","{{json .Config.Entrypoint}}",args.image]))
 cname = uuid4().hex
 stfdfile=osp.join(tmpdir,'stfd')
 with open(stfdfile,'w') as f: f.write(guest_script)
@@ -84,7 +87,7 @@ os.chmod(stfdfile,0o755)
 print(sh(["docker","run","--name",cname,"--privileged",
     "-v",sh(["which","strace"])+":/.strace",
     "-v",stfdfile+":/stfd",
-    "--entrypoint","sh",args.image,"-c","/stfd "+" ".join(['"%s"'%x for x in args.cmd])]))
+    "--entrypoint","sh",args.image,"-c","/stfd "+" ".join(['"%s"'%x for x in entrypoint+args.cmd])]))
 sh(["docker","export","-o",osp.join(tmpdir,"slim.tar"),cname])
 sh(["docker","rm",cname])
 
@@ -104,9 +107,11 @@ with tarfile.open(osp.join(tmpdir,"base.tar")) as base:
         with tarfile.open(osp.join(tmpdir,"build","rootfs.tar"),'w') as rootfs:
             for m in slim.getmembers():
                 #if file doesn't exist, symlink was changed, or contents was changed
-                if ((m.name not in base.getnames())
+                if (
+                    (m.name not in base.getnames())
                     or (m.issym() and m.linkpath != base.getmember(m.name).linkpath)
-                    or (m.isfile() and md5(slim.extractfile(m).read()).digest() != md5(base.extractfile(m.name).read()).digest())):
+                    or (m.isfile() and md5(slim.extractfile(m).read()).digest() != md5(base.extractfile(m.name).read()).digest())
+                   ):
                     rootfs.addfile(m,slim.extractfile(m) if m.isfile() else None)
 
 

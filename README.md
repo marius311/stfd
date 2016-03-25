@@ -46,6 +46,5 @@ Uncompressed size shrunk from 644.6 MB to 211.6 MB
 ##TODO
 * Support for other guest distros
 * Pass other docker options
-* Handle images with ENTRYPOINT
 * Slim at a different layer than the FROM layer
 * Package up inside Docker
