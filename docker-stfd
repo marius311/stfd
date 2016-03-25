@@ -84,7 +84,7 @@ os.chmod(stfdfile,0o755)
 print(sh(["docker","run","--name",cname,"--privileged",
     "-v",sh(["which","strace"])+":/.strace",
     "-v",stfdfile+":/stfd",
-    "--entrypoint","sh",args.image,"-c","/stfd "+" ".join(args.cmd)]))
+    "--entrypoint","sh",args.image,"-c","/stfd "+" ".join(['"%s"'%x for x in args.cmd])]))
 sh(["docker","export","-o",osp.join(tmpdir,"slim.tar"),cname])
 sh(["docker","rm",cname])
 
