@@ -12,14 +12,14 @@ If you would normally run your container with,
 ```bash
 docker run <image> <cmd>
 ```
-then run,
+then,
 ```bash
 docker-stfd <image> <cmd>
 ```
-This will run the container and create a slimmed down version with the name `<image>-slim`.
+creates a slimmed down version (with default name `<image>-slim`).
 
 ###Notes
-* If you your `<cmd>` contains the same option flags as `docker-stfd`, you can use `--` to separate them, i.e. `docker-stfd <image> -- <cmd>`. 
+* If your `<cmd>` contains the same option flags as `docker-stfd`, you must use `--` to separate them, i.e. `docker-stfd <image> -- <cmd>`. 
 * If running your container takes a long time, but you are sure that, e.g. within the first X seconds all of the necessary files have been accessed, a useful trick is to run `timeout X <cmd>` instead of `<cmd>`.
 
 
