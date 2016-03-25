@@ -4,7 +4,7 @@ from __future__ import print_function
 import argparse
 import os, os.path as osp
 from tempfile import mkdtemp
-from subprocess import check_output
+from subprocess import check_output, STDOUT
 from uuid import uuid4
 from hashlib import md5
 import sys
@@ -40,7 +40,7 @@ echo "$unused" | xargs rm -f
 """
 
 def sh(*args,**kwargs):
-    return check_output(*args,**kwargs).strip()
+    return check_output(stderr=STDOUT,*args,**kwargs).strip()
 
 
 parser = argparse.ArgumentParser(prog='docker-stfd')
@@ -58,74 +58,90 @@ if ':' not in args.image: args.image += ':latest'
 if args.tag is None: args.tag=args.image+'-slim'
 
 
-tmpdir = mkdtemp()
+try:
 
-#get reverse engineered Dockerfile
-print("Reverse engineering Dockerfile...")
+    tmpdir = mkdtemp()
+    cname = uuid4().hex
 
-def fixline(l):
-    """workaround for https://github.com/CenturyLinkLabs/dockerfile-from-image/issues/13"""
-    l=re.sub(r'ENTRYPOINT &{(.*)}',r'ENTRYPOINT \1',l)
-    if any([l.startswith(x) for x in ['CMD','ENTRYPOINT']]):
-        l = re.sub(r'\[(.*)\]',lambda m: '[%s]'%','.join(['"%s"'%x for x in m.group(0).split('"')[1::2]]),l)
-    return l
+    #get reverse engineered Dockerfile
+    print("Reverse engineering Dockerfile...")
 
-dockerfile = sh(["docker","run","--rm",
-                 "-v","/var/run/docker.sock:/var/run/docker.sock",
-                 "centurylink/dockerfile-from-image",args.image]).splitlines()
-dockerfile = map(fixline,dockerfile)
-baseimage = next(l for l in dockerfile if l.startswith('FROM')).split()[1]
+    def fixline(l):
+        """workaround for https://github.com/CenturyLinkLabs/dockerfile-from-image/issues/13"""
+        l=re.sub(r'ENTRYPOINT &{(.*)}',r'ENTRYPOINT \1',l)
+        if any([l.startswith(x) for x in ['CMD','ENTRYPOINT']]):
+            l = re.sub(r'\[(.*)\]',lambda m: '[%s]'%','.join(['"%s"'%x for x in m.group(0).split('"')[1::2]]),l)
+        return l
 
-
-#get slim'ed filesystem
-print("Inspecting container file usage...")
-entrypoint = json.loads(sh(["docker","inspect","-f","{{json .Config.Entrypoint}}",args.image]))
-cname = uuid4().hex
-stfdfile=osp.join(tmpdir,'stfd')
-with open(stfdfile,'w') as f: f.write(guest_script)
-os.chmod(stfdfile,0o755)
-print(sh(["docker","run","--name",cname,"--privileged",
-    "-v",sh(["which","strace"])+":/.strace",
-    "-v",stfdfile+":/stfd",
-    "--entrypoint","sh",args.image,"-c","/stfd "+" ".join(['"%s"'%x for x in entrypoint+args.cmd])]))
-sh(["docker","export","-o",osp.join(tmpdir,"slim.tar"),cname])
-sh(["docker","rm",cname])
+    dockerfile = sh(["docker","run","--rm",
+                     "-v","/var/run/docker.sock:/var/run/docker.sock",
+                     "centurylink/dockerfile-from-image",args.image]).splitlines()
+    dockerfile = map(fixline,dockerfile)
+    baseimage = next(l for l in dockerfile if l.startswith('FROM')).split()[1]
 
 
-#get base filesystem
-print("Getting base filesystem...")
-cname = uuid4().hex
-sh(["docker","run","--name",cname,"--entrypoint","sh",baseimage,"-c","true"])
-sh(["docker","export","-o",osp.join(tmpdir,"base.tar"),cname])
-sh(["docker","rm",cname])
-
-#create tar with files in slim not already in base
-print("Creating new slimmed filesystem...")
-os.makedirs(osp.join(tmpdir,"build"))
-with tarfile.open(osp.join(tmpdir,"base.tar")) as base:
-    with tarfile.open(osp.join(tmpdir,"slim.tar")) as slim:
-        with tarfile.open(osp.join(tmpdir,"build","rootfs.tar"),'w') as rootfs:
-            for m in slim.getmembers():
-                #if file doesn't exist, symlink was changed, or contents was changed
-                if (
-                    (m.name not in base.getnames())
-                    or (m.issym() and m.linkpath != base.getmember(m.name).linkpath)
-                    or (m.isfile() and md5(slim.extractfile(m).read()).digest() != md5(base.extractfile(m.name).read()).digest())
-                   ):
-                    rootfs.addfile(m,slim.extractfile(m) if m.isfile() else None)
+    #get slim'ed filesystem
+    print("Inspecting container file usage...")
+    entrypoint = json.loads(sh(["docker","inspect","-f","{{json .Config.Entrypoint}}",args.image]))
+    stfdfile=osp.join(tmpdir,'stfd')
+    with open(stfdfile,'w') as f: f.write(guest_script)
+    os.chmod(stfdfile,0o755)
+    print(sh(["docker","run","--name",cname,"--privileged",
+        "-v",sh(["which","strace"])+":/.strace",
+        "-v",stfdfile+":/stfd",
+        "--entrypoint","sh",args.image,"-c","/stfd "+" ".join(['"%s"'%x for x in entrypoint+args.cmd])]))
+    sh(["docker","export","-o",osp.join(tmpdir,"slim.tar"),cname])
+    sh(["docker","rm",cname])
 
 
-#build new container
-print("Building new container...")
-dockerfile = [l for l in dockerfile if not any([l.startswith(x) for x in ['COPY','ADD','RUN']])]
-dockerfile += ['ADD rootfs.tar /']
-with open(osp.join(tmpdir,"build","Dockerfile"),'w') as df:  df.write('\n'.join(dockerfile))
-sh(["docker","build","-t",args.tag,osp.join(tmpdir,"build")])
+    #get base filesystem
+    print("Getting base filesystem...")
+    sh(["docker","run","--name",cname,"--entrypoint","sh",baseimage,"-c","true"])
+    sh(["docker","export","-o",osp.join(tmpdir,"base.tar"),cname])
+    sh(["docker","rm",cname])
 
-#cleanup
-sh(["rm","-rf",tmpdir])
+    #create tar with files in slim not already in base
+    print("Creating new slimmed filesystem...")
+    os.makedirs(osp.join(tmpdir,"build"))
+    with tarfile.open(osp.join(tmpdir,"base.tar")) as base:
+        with tarfile.open(osp.join(tmpdir,"slim.tar")) as slim:
+            with tarfile.open(osp.join(tmpdir,"build","rootfs.tar"),'w') as rootfs:
+                for m in slim.getmembers():
+                    #if file doesn't exist, symlink was changed, or contents was changed
+                    if (
+                        (m.name not in base.getnames())
+                        or (m.issym() and m.linkpath != base.getmember(m.name).linkpath)
+                        or (m.isfile() and md5(slim.extractfile(m).read()).digest() != md5(base.extractfile(m.name).read()).digest())
+                       ):
+                        rootfs.addfile(m,slim.extractfile(m) if m.isfile() else None)
 
-def get_size(image):
-    return sh(["docker","images","--format","{{.Size}}",image])
-print("Created image "+args.tag)
-print("Uncompressed size shrunk from %s to %s"%(get_size(args.image),get_size(args.tag)))
+
+    #build new container
+    print("Building new container...")
+    dockerfile = [l for l in dockerfile if not any([l.startswith(x) for x in ['COPY','ADD','RUN']])]
+    dockerfile += ['ADD rootfs.tar /']
+    with open(osp.join(tmpdir,"build","Dockerfile"),'w') as df:  df.write('\n'.join(dockerfile))
+    sh(["docker","build","-t",args.tag,osp.join(tmpdir,"build")])
+
+
+    def get_size(image):
+        return sh(["docker","images","--format","{{.Size}}",image])
+    print("Created image "+args.tag)
+    print("Uncompressed size shrunk from %s to %s"%(get_size(args.image),get_size(args.tag)))
+
+except KeyboardInterrupt:
+    print("Cleaning up temporary files...")
+
+finally:
+    #cleanup
+    try:
+        sh(["rm","-rf",tmpdir])
+    except:
+        pass
+    try:
+        sh(["docker","inspect",cname]) #will fail if container doesn't exist
+        sh(["docker","rm","-f",cname])
+    except:
+        pass
+
+
