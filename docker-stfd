@@ -6,6 +6,7 @@ import os, os.path as osp
 from tempfile import mkdtemp
 from subprocess import check_output
 from uuid import uuid4
+from hashlib import md5
 import sys
 import tarfile
 import re
@@ -102,11 +103,12 @@ with tarfile.open(osp.join(tmpdir,"base.tar")) as base:
     with tarfile.open(osp.join(tmpdir,"slim.tar")) as slim:
         with tarfile.open(osp.join(tmpdir,"build","rootfs.tar"),'w') as rootfs:
             for m in slim.getmembers():
-                if (m.name not in base.getnames()):
+                #if file doesn't exist, symlink was changed, or contents was changed
+                if ((m.name not in base.getnames())
+                    or (m.issym() and m.linkpath != base.getmember(m.name).linkpath)
+                    or (m.isfile() and md5(slim.extractfile(m).read()).digest() != md5(base.extractfile(m.name).read()).digest())):
                     rootfs.addfile(m,slim.extractfile(m) if m.isfile() else None)
-                else:
-                    #TODO: diff file, add if different
-                    pass
+
 
 #build new container
 print("Building new container...")
