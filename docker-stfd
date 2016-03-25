@@ -41,6 +41,7 @@ def sh(*args,**kwargs):
 
 
 parser = argparse.ArgumentParser(prog='docker-stfd')
+parser.add_argument('-t','--tag',help='what to tag the slimmed image (default: image-slim)')
 parser.add_argument('image',help='the image name')
 parser.add_argument('cmd',nargs='*',help='a command (which should access all necessary files)')
 if '--' in sys.argv: 
@@ -50,8 +51,9 @@ else:
     argv,extrav=sys.argv[1:],[]
 args,unknown = parser.parse_known_args(argv)
 args.cmd += (unknown+extrav)
-
 if ':' not in args.image: args.image += ':latest'
+if args.tag is None: args.tag=args.image+'-slim'
+
 
 tmpdir = mkdtemp()
 
@@ -110,14 +112,13 @@ with tarfile.open(osp.join(tmpdir,"base.tar")) as base:
 print("Building new container...")
 dockerfile = [l for l in dockerfile if not any([l.startswith(x) for x in ['COPY','ADD','RUN']])]
 dockerfile += ['ADD rootfs.tar /']
-newimage = args.image+'-slim'
 with open(osp.join(tmpdir,"build","Dockerfile"),'w') as df:  df.write('\n'.join(dockerfile))
-sh(["docker","build","-t",newimage,osp.join(tmpdir,"build")])
+sh(["docker","build","-t",args.tag,osp.join(tmpdir,"build")])
 
 #cleanup
 sh(["rm","-rf",tmpdir])
 
 def get_size(image):
     return sh(["docker","images","--format","{{.Size}}",image])
-print("Created image "+newimage)
-print("Uncompressed size shrunk from %s to %s"%(get_size(args.image),get_size(newimage)))
+print("Created image "+args.tag)
+print("Uncompressed size shrunk from %s to %s"%(get_size(args.image),get_size(args.tag)))
