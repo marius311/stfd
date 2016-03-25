@@ -100,6 +100,7 @@ try:
     sh(["docker","export","-o",osp.join(tmpdir,"base.tar"),cname])
     sh(["docker","rm",cname])
 
+
     #create tar with files in slim not already in base
     print("Creating new slimmed filesystem...")
     os.makedirs(osp.join(tmpdir,"build"))
@@ -124,10 +125,12 @@ try:
     sh(["docker","build","-t",args.tag,osp.join(tmpdir,"build")])
 
 
+    #print stats
     def get_size(image):
         return sh(["docker","images","--format","{{.Size}}",image])
-    print("Created image "+args.tag)
     print("Uncompressed size shrunk from %s to %s"%(get_size(args.image),get_size(args.tag)))
+    print("To test, run:")
+    print("docker run --rm %s "%args.tag + " ".join(['"%s"'%x for x in args.cmd]))
 
 except KeyboardInterrupt:
     print("Cleaning up temporary files...")
