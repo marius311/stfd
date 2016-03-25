@@ -19,8 +19,8 @@ docker-stfd <image> <cmd>
 This will run the container and create a slimmed down version with the name `<image>-slim`.
 
 ###Notes
+* If you your `<cmd>` contains the same option flags as `docker-stfd`, you can use `--` to separate them, i.e. `docker-stfd <image> -- <cmd>`. 
 * If running your container takes a long time, but you are sure that, e.g. within the first X seconds all of the necessary files have been accessed, a useful trick is to run `timeout X <cmd>` instead of `<cmd>`.
-* `docker-stfd` doesn't know about volumes, so if any volumes are mounted in the container, files from inside of them may be deleted.
 
 
 ###Example
@@ -46,3 +46,6 @@ Uncompressed size shrunk from 644.6 MB to 211.6 MB
 ##TODO
 * Support for other guest distros
 * Pass other docker options
+* Handle images with ENTRYPOINT
+* Slim at a different layer than the FROM layer
+* Package up inside Docker

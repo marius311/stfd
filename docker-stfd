@@ -41,13 +41,15 @@ def sh(*args,**kwargs):
 
 
 parser = argparse.ArgumentParser(prog='docker-stfd')
-parser.add_argument('-v')
 parser.add_argument('image',help='the image name')
-parser.add_argument('cmd',default='',nargs='*',help='a command (which should access all necessary files)')
-args,extra = parser.parse_known_args()
-args.cmd += extra
-print(args)
-sys.exit()
+parser.add_argument('cmd',nargs='*',help='a command (which should access all necessary files)')
+if '--' in sys.argv: 
+    isplit=sys.argv.index('--')
+    argv,extrav=sys.argv[1:isplit],sys.argv[isplit+1:]
+else: 
+    argv,extrav=sys.argv[1:],[]
+args,unknown = parser.parse_known_args(argv)
+args.cmd += (unknown+extrav)
 
 if ':' not in args.image: args.image += ':latest'
 
@@ -77,9 +79,9 @@ stfdfile=osp.join(tmpdir,'stfd')
 with open(stfdfile,'w') as f: f.write(guest_script)
 os.chmod(stfdfile,0o755)
 print(sh(["docker","run","--name",cname,"--privileged",
-    "-v",sh(["which","strace"]).strip()+":/.strace",
+    "-v",sh(["which","strace"])+":/.strace",
     "-v",stfdfile+":/stfd",
-    "--entrypoint","sh",args.image,"-c",'/stfd %s'%args.cmd]))
+    "--entrypoint","sh",args.image,"-c","/stfd "+" ".join(args.cmd)]))
 sh(["docker","export","-o",osp.join(tmpdir,"slim.tar"),cname])
 sh(["docker","rm",cname])
 
@@ -101,7 +103,7 @@ with tarfile.open(osp.join(tmpdir,"base.tar")) as base:
                 if (m.name not in base.getnames()):
                     rootfs.addfile(m,slim.extractfile(m) if m.isfile() else None)
                 else:
-                    #TODO: diff file
+                    #TODO: diff file, add if different
                     pass
 
 #build new container
