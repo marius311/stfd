@@ -4,7 +4,7 @@ from __future__ import print_function
 import argparse
 import os, os.path as osp
 from tempfile import mkdtemp
-from subprocess import check_output, STDOUT
+from subprocess import check_output, STDOUT, CalledProcessError
 from uuid import uuid4
 from hashlib import md5
 import sys
@@ -17,7 +17,7 @@ import json
 guest_script=r"""
 #!/bin/sh
 
-parse_strace() {  
+parse_strace() {
     grep -oP "\(\".*?\"," | cut -c 3- | rev | cut -c 3- | rev | sort -u
 }
 
@@ -27,11 +27,11 @@ get_size(){
 
 # first strace the command to get all the files it uses
 # then strace a readlink of all the files to resolve the entire symlink tree for all of them
-used=$(/.strace -f -e trace=file $* 2>&1 | parse_strace | xargs /.strace -f -e trace=lstat readlink -f 2>&1 | parse_strace)
+used=$(/.strace -f -e trace=file "$@" 2>&1 | parse_strace | xargs /.strace -f -e trace=lstat readlink -f 2>&1 | parse_strace)
 echo Used files: $(echo "$used" | wc -l) \($(get_size "$used")\)
 
 # list all files and remove the used ones we've found are used
-# for now, only check the usual major offenders 
+# for now, only check the usual major offenders
 unused=$(echo "$used" > /.used && find /usr /lib /var /root /sbin /bin -type f | grep -vxf /.used && rm /.used)
 echo Unused files: $(echo "$unused" | wc -l) \($(get_size "$unused")\)
 
@@ -44,13 +44,14 @@ def sh(*args,**kwargs):
 
 
 parser = argparse.ArgumentParser(prog='docker-stfd')
-parser.add_argument('-t','--tag',help='what to tag the slimmed image (default: image-slim)')
+parser.add_argument('-t','--tag',help='what to tag the slimmed image (default: <image>-slim)')
+parser.add_argument('--entrypoint',help='overwrite the default ENTRYPOINT of the image')
 parser.add_argument('image',help='the image name')
-parser.add_argument('cmd',nargs='*',help='a command (which should access all necessary files)')
-if '--' in sys.argv: 
+parser.add_argument('cmd',nargs='*',help='the command to run (which should access all necessary files)')
+if '--' in sys.argv:
     isplit=sys.argv.index('--')
     argv,extrav=sys.argv[1:isplit],sys.argv[isplit+1:]
-else: 
+else:
     argv,extrav=sys.argv[1:],[]
 args,unknown = parser.parse_known_args(argv)
 args.cmd += (unknown+extrav)
@@ -73,23 +74,30 @@ try:
             l = re.sub(r'\[(.*)\]',lambda m: '[%s]'%','.join(['"%s"'%x for x in m.group(0).split('"')[1::2]]),l)
         return l
 
-    dockerfile = sh(["docker","run","--rm",
-                     "-v","/var/run/docker.sock:/var/run/docker.sock",
-                     "centurylink/dockerfile-from-image",args.image]).splitlines()
+    dockerfile = sh([
+        "docker","run","--rm",
+        "-v","/var/run/docker.sock:/var/run/docker.sock",
+        "centurylink/dockerfile-from-image",args.image
+    ]).splitlines()
     dockerfile = map(fixline,dockerfile)
     baseimage = next(l for l in dockerfile if l.startswith('FROM')).split()[1]
 
 
     #get slim'ed filesystem
     print("Inspecting container file usage...")
-    entrypoint = json.loads(sh(["docker","inspect","-f","{{json .Config.Entrypoint}}",args.image]))
+    if args.entrypoint:
+        entrypoint = args.entrypoint.split()
+    else:
+        entrypoint = map(str,json.loads(sh(["docker","inspect","-f","{{json .Config.Entrypoint}}",args.image])))
     stfdfile=osp.join(tmpdir,'stfd')
     with open(stfdfile,'w') as f: f.write(guest_script)
     os.chmod(stfdfile,0o755)
-    print(sh(["docker","run","--name",cname,"--privileged",
+    print(sh([
+        "docker","run","--name",cname,"--privileged",
         "-v",sh(["which","strace"])+":/.strace",
         "-v",stfdfile+":/stfd",
-        "--entrypoint","sh",args.image,"-c","/stfd "+" ".join(['"%s"'%x for x in entrypoint+args.cmd])]))
+        "--entrypoint","sh",args.image,"-c","/stfd "+' '.join('"%s"'%x for x in entrypoint+args.cmd)
+    ]))
     sh(["docker","export","-o",osp.join(tmpdir,"slim.tar"),cname])
     sh(["docker","rm",cname])
 
@@ -134,7 +142,9 @@ try:
 
 except KeyboardInterrupt:
     print("Cleaning up temporary files...")
-
+except CalledProcessError as e:
+    print("Error calling: "+str(e.cmd))
+    print(e.output.strip())
 finally:
     #cleanup
     try:
@@ -146,5 +156,3 @@ finally:
         sh(["docker","rm","-f",cname])
     except:
         pass
-
-
