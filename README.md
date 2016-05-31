@@ -1,4 +1,4 @@
-#Slim-The-Filesystem-Down (`docker-stfd`)
+# Slim-The-Filesystem-Down (`docker-stfd`)
 
 `docker-stfd` is a tool which massively reduces the size of existing Docker images by running them, monitoring what files in the filesystem are actually being used, deleting the ones that aren't, then rebuilding the top image layers into one. It makes use of [dockerfile-from-image](https://github.com/CenturyLinkLabs/dockerfile-from-image).
 
@@ -6,7 +6,7 @@ This will only work in the case that the *exact* same set of files are accessed 
 
 Nevertheless, this is useful for containers which perform a straighforward deterministic calculation each time, and where size if very important. For example, we use `docker-stfd` to slim down images before sending them to the volunteers at [Cosmology@Home](https://github.com/marius311/cosmohome).
 
-##Usage
+## Usage
 
 If you would normally run your container with,
 ```bash
@@ -18,19 +18,18 @@ docker-stfd <image> <cmd>
 ```
 creates a slimmed down version (with default name `<image>-slim`).
 
-###Notes
+### Notes
 * If your `<cmd>` contains the same option flags as `docker-stfd`, you must use `--` to separate them, i.e. `docker-stfd <image> -- <cmd>`. 
 * If running your container takes a long time, but you are sure that, e.g. within the first X seconds all of the necessary files have been accessed, a useful trick is to run `timeout X <cmd>` instead of `<cmd>`.
 
 
-###Example
+### Example
 
 ```bash
 $ ./docker-stfd myimage:latest timeout 10 python mycode.py
 Reverse engineering Dockerfile...
 Inspecting container file usage...
-Used files: 8054 (626M)
-Unused files: 17140 (552M)
+Getting image filesystem...
 Getting base filesystem...
 Creating new slimmed filesystem...
 Building new container...
@@ -38,12 +37,12 @@ Created image myimage:latest-slim
 Uncompressed size shrunk from 644.6 MB to 211.6 MB
 ```
 
-##Requirements
+## Requirements
 
 * Your host system needs `strace` and `docker` installed. 
 * The container will needs some basic commands like `find`, `grep`, `sort`, and `readlink`. Most Debian/Ubuntu guests have this by default. This is not yet compatible with Busybox's `grep`. I have not tested others. 
 
-##TODO
+## TODO
 * Support for other guest distros
 * Pass other docker options
 * Slim at a different layer than the FROM layer

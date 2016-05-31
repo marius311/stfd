@@ -7,13 +7,14 @@ from tempfile import mkdtemp
 from subprocess import check_output, STDOUT, CalledProcessError
 from uuid import uuid4
 from hashlib import md5
+from itertools import chain
 import sys
 import tarfile
 import re
 import json
 
 
-#the script we run inside the container to delete unused files
+#the script we run inside the container to probe used files
 guest_script=r"""
 #!/bin/sh
 
@@ -21,22 +22,10 @@ parse_strace() {
     grep -oP "\(\".*?\"," | cut -c 3- | rev | cut -c 3- | rev | sort -u
 }
 
-get_size(){
-    du -sch $1 2>/dev/null | tail -n 1 | awk '{ print $1 }'
-}
-
 # first strace the command to get all the files it uses
 # then strace a readlink of all the files to resolve the entire symlink tree for all of them
-used=$(/.strace -f -e trace=file "$@" 2>&1 | parse_strace | xargs /.strace -f -e trace=lstat readlink -f 2>&1 | parse_strace)
-echo Used files: $(echo "$used" | wc -l) \($(get_size "$used")\)
-
-# list all files and remove the used ones we've found are used
-# for now, only check the usual major offenders
-unused=$(echo "$used" > /.used && find /usr /lib /var /root /sbin /bin -type f | grep -vxf /.used && rm /.used)
-echo Unused files: $(echo "$unused" | wc -l) \($(get_size "$unused")\)
-
-# delete the unused files
-echo "$unused" | xargs rm -f
+/.strace -f -e trace=file -o /.strace.out "$@"
+cat /.strace.out | parse_strace | xargs /.strace -f -e trace=lstat readlink -f 2>&1 | parse_strace > /.usedfiles
 """
 
 def sh(*args,**kwargs):
@@ -46,6 +35,7 @@ def sh(*args,**kwargs):
 parser = argparse.ArgumentParser(prog='docker-stfd')
 parser.add_argument('-t','--tag',help='what to tag the slimmed image (default: <image>-slim)')
 parser.add_argument('--entrypoint',help='overwrite the default ENTRYPOINT of the image')
+parser.add_argument('-v', action='append', dest='volumes',default=[],help='bind mount a volume')
 parser.add_argument('image',help='the image name')
 parser.add_argument('cmd',nargs='*',help='the command to run (which should access all necessary files)')
 if '--' in sys.argv:
@@ -83,24 +73,35 @@ try:
     baseimage = next(l for l in dockerfile if l.startswith('FROM')).split()[1]
 
 
-    #get slim'ed filesystem
+    #get used files
     print("Inspecting container file usage...")
     if args.entrypoint:
         entrypoint = args.entrypoint.split()
     else:
         entrypoint = map(str,json.loads(sh(["docker","inspect","-f","{{json .Config.Entrypoint}}",args.image])))
+        
     stfdfile=osp.join(tmpdir,'stfd')
     with open(stfdfile,'w') as f: f.write(guest_script)
     os.chmod(stfdfile,0o755)
-    print(sh([
-        "docker","run","--name",cname,"--privileged",
-        "-v",sh(["which","strace"])+":/.strace",
-        "-v",stfdfile+":/stfd",
-        "--entrypoint","sh",args.image,"-c","/stfd "+' '.join('"%s"'%x for x in entrypoint+args.cmd)
-    ]))
+    
+    usedfiles=osp.join(tmpdir,'usedfiles')
+    sh(['touch',usedfiles])
+    
+    cmd = ["docker","run","--rm","--privileged",
+           "-v",sh(["which","strace"])+":/.strace",
+           "-v",stfdfile+":/stfd",
+           "-v",usedfiles+":/.usedfiles"]
+    for v in args.volumes: 
+        cmd += ['-v',v]
+    cmd += ["--entrypoint","sh",args.image,"-c","/stfd "+' '.join('"%s"'%x for x in entrypoint+args.cmd)]
+    print(sh(cmd))
+    usedfiles = open(usedfiles).read().splitlines()
+    
+    #get image filesystem
+    print("Getting image filesystem...")
+    sh(["docker","run","--name",cname,"--entrypoint","sh",args.image,"-c","true"])
     sh(["docker","export","-o",osp.join(tmpdir,"slim.tar"),cname])
     sh(["docker","rm",cname])
-
 
     #get base filesystem
     print("Getting base filesystem...")
@@ -117,11 +118,12 @@ try:
             with tarfile.open(osp.join(tmpdir,"build","rootfs.tar"),'w') as rootfs:
                 for m in slim.getmembers():
                     #if file doesn't exist, symlink was changed, or contents was changed
-                    if (
-                        (m.name not in base.getnames())
-                        or (m.issym() and m.linkpath != base.getmember(m.name).linkpath)
-                        or (m.isfile() and md5(slim.extractfile(m).read()).digest() != md5(base.extractfile(m.name).read()).digest())
-                       ):
+                    if (('/'+m.name in usedfiles)
+                        and 
+                        ((m.name not in base.getnames())
+                         or (m.issym() and m.linkpath != base.getmember(m.name).linkpath)
+                         or (m.isfile() and md5(slim.extractfile(m).read()).digest() != md5(base.extractfile(m.name).read()).digest())
+                       )):
                         rootfs.addfile(m,slim.extractfile(m) if m.isfile() else None)
 
 
@@ -138,7 +140,12 @@ try:
         return sh(["docker","images","--format","{{.Size}}",image])
     print("Uncompressed size shrunk from %s to %s"%(get_size(args.image),get_size(args.tag)))
     print("To test, run:")
-    print("docker run --rm %s "%args.tag + " ".join(['"%s"'%x for x in args.cmd]))
+    cmd = ["docker","run","--rm"]
+    if args.entrypoint: cmd += ["--entrypoint",args.entrypoint]
+    for v in args.volumes: cmd += ["-v",v]
+    cmd += [args.tag]
+    for x in args.cmd: cmd += ['"%s"'%x]
+    print(" ".join(cmd))
 
 except KeyboardInterrupt:
     print("Cleaning up temporary files...")
